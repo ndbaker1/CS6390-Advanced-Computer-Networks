@@ -27,6 +27,8 @@ def OLSR():
     pass
   def createHELLO():
     pass
+  def createDATA():
+    pass
 
   i = 0
   while i < 120:
