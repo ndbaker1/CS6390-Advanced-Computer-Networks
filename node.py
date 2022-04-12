@@ -1,4 +1,5 @@
 import time
+from sys import argv
 
 '''
 initialize variables
@@ -22,20 +23,35 @@ end while
 close files
 end program
 '''
-def OLSR():
-  def createTC():
+class OLSR:
+  def __init__(self, node_id: int):
+    self.node_id = node_id
+
+  def send_tc(self):
     pass
-  def createHELLO():
+  def send_hello(self):
     pass
-  def createDATA():
+  def send_data(dest: int, message: str):
     pass
 
-  i = 0
-  while i < 120:
-    with open() as recieved:
-      pass
-    pass
-  pass
+  def run(self, message: (int, str, int) = (-1, "", -1)):
+    destination_id, message, delay = message
+    i = 0
+    while i < 120:
+      if i == delay:
+        self.send_data(destination_id, message)
+      if i % 5 == 0:
+        self.send_hello()
+      if i % 10 == 0:
+        self.send_tc()
+
+      i += 1
 
 if __name__ == "__main__":
-  OLSR()
+  source_id, destination_id = map(int, argv[1:3])
+  if source_id == destination_id:
+    OLSR(source_id).run()
+  else:
+    message, delay = argv[3], int(argv[4])
+    OLSR(source_id).run((destination_id, message, delay))
+
