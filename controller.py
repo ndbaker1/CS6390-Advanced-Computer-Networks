@@ -4,31 +4,53 @@ from time import sleep
 
 class Controller:
     def __init__(self):
-        self.node_indexes = {}
+        self.indexes = {}
+        self.topology = {}
+        self.topology_changes = {}
+
+        with open('topology.txt') as top:
+            for line in filter(lambda e: len(e) > 0, top.readlines()):
+                delay, state, source, destination = line.split(' ')
+                delay = int(delay)
+                source = int(source)
+                destination = int(destination)
+
+                change_set = self.topology_changes.get(delay, set())
+                change_set.add((state, source, destination))
+
+                self.topology_changes[delay] = change_set
+
+    def update_topology(self, clock):
+        for state, source, destination in self.topology_changes.get(clock, []):
+            neighbor_set = self.topology.get(source, set())
+
+            if state == 'UP':
+                neighbor_set.add(destination)
+            elif state == 'DOWN':
+                neighbor_set.remove(destination)
+
+            self.topology[source] = neighbor_set
 
     def run(self):
         i = 0
         while i < 120:
-            for message_file in [x for x in os.listdir('.') if 'from' in x]:
-                with open(message_file) as mf:
+            self.update_topology(i)
+            for node, neighbors in self.topology.items():
+                with open('from%d' % node) as mf:
                     lines = mf.readlines()
 
-                    if message_file in self.node_indexes:
-                        last_read_index = self.node_indexes[message_file]
-                    else:
-                        last_read_index = 0
+                    last_index = 0 if node not in self.indexes else self.indexes[node]
 
-                    new_lines = lines[last_read_index:]
-                    self.node_indexes[message_file] = len(lines)
+                    self.indexes[node] = len(lines)
 
-                    for line in new_lines:
+                    for line in lines[last_index:]:
                         fields = line.split(' ')
                         destination_node = fields[0]
 
                         if destination_node == '*':
                             sender = fields[1]
-                            for listener in [x for x in os.listdir('.') if 'to' in x and x != 'to%s' % sender]:
-                                with open(listener, 'a') as dest_file:
+                            for neighbor in neighbors:
+                                with open('to%d' % neighbor, 'a') as dest_file:
                                     dest_file.write(line)
                         else:
                             with open('to%s' % destination_node, 'a') as dest_file:
