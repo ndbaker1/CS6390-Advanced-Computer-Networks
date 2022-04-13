@@ -1,27 +1,16 @@
 from time import sleep
 from sys import argv
 from pathlib import Path
+
 '''
-initialize variables
-open fromX.txt for appending, toX.txt for reading,
-and Xreceived for appending.
-i = 0
-while (i < 120)
 read toX.txt
 process any new received messages (i.e. DATA, HELLO, TC)
 if it is time to send the data string
 if there is a routing table entry for the destination
 send the data message
-if i is a multiple of 5 send a hello message
-if i is a multiple of 10 send a TC message
 remove old entries of the neighbor table if necessary
 remove old entries from the TC table if necessary
 recalculate the routing table if necessary
-i = i + 1;
-sleep for 1 second.
-end while
-close files
-end program
 '''
 
 
@@ -60,38 +49,38 @@ class OLSR_node:
 
     def send_tc(self):
         with open('from%d' % self.node_id, 'a') as sent_messages:
-            sent_messages.write([
+            sent_messages.write(
                 '* %d TC %d %d BIDIR %s MS %s\n' % (
                     self.node_id,
                     self.node_id,
                     self.tc_seq,
                     ' '.join(self.ms_set)
                 )
-            ])
+            )
         self.tc_seq += 1
 
     def send_hello(self):
         with open('from%d' % self.node_id, 'a') as sent_messages:
-            sent_messages.write([
-                '* %d HELLO UNIDIR %s BIDIR %s MPR %s' % (
+            sent_messages.write(
+                '* %d HELLO UNIDIR %s BIDIR %s MPR %s\n' % (
                     self.node_id,
                     ' '.join(self.unidirection_links),
                     ' '.join(self.bidirection_links),
                     ' '.join(self.mpr_set)
                 )
-            ])
+            )
 
     def send_data(dest_id: int, message: str):
         with open('from%d' % self.node_id, 'a') as sent_messages:
-            sent_messages.writelines([
-                '%d %d DATA %d %d %s' % (
+            sent_messages.write(
+                '%d %d DATA %d %d %s\n' % (
                     self.compute_next_hop(dest_id),
                     self.node_id,
                     self.node_id,
                     dest_id,
                     message,
                 )
-            ])
+            )
 
     def recieve_data(self, data):
         with open('recieved%d' % self.node_id, 'a') as recieved_messages:
@@ -99,9 +88,8 @@ class OLSR_node:
 
     def run(self, message: (int, str, int) = (-1, "", -1)):
         destination_id, message, delay = message
-        i = 0
-        while i < 120:
-
+        i = 1
+        while i <= 120:
             with open('to%d' % self.node_id) as recieved_messages:
                 recieved_messages.readlines()
                 new_messages = []
@@ -136,3 +124,5 @@ if __name__ == "__main__":
     else:
         message, delay = argv[3], int(argv[4])
         olsr_node.run((destination_id, message, delay))
+
+    print('node %d finished.' % source_id)
