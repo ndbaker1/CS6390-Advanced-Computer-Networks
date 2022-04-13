@@ -14,7 +14,7 @@ recalculate the routing table if necessary
 '''
 
 
-class OLSR_node:
+class OLSRNode:
     def __init__(self, node_id: int):
         self.node_id = node_id
         self.unidirection_links = []
@@ -25,9 +25,15 @@ class OLSR_node:
         self.tc_table = []
         self.routing_table = {}
 
+        # trigger the creation of files
         Path('to%d' % self.node_id).touch()
         Path('from%d' % self.node_id).touch()
         Path('recieved%d' % self.node_id).touch()
+
+        # give time for other nodes to properly setup
+        sleep(1)
+
+    ''' sort read messages based on type (HELLO, TC, DATA) '''
 
     def sort_messages(self, messages):
         return (
@@ -35,6 +41,8 @@ class OLSR_node:
             [x for x in messages if x[3] == 'TC'],
             [x for x in messages if x[3] == 'DATA'],
         )
+
+    ''' forward messages by updating their sender node '''
 
     def forward_message(self, message: str):
         with open('from%d' % self.node_id, 'a') as sent_messages:
@@ -44,8 +52,12 @@ class OLSR_node:
             updated_message = ' '.join(split_message) + '\n'
             sent_messages.write(updated_message)
 
+    ''' computer the next hop for a given destination node '''
+
     def compute_next_hop(self, dest_id: int) -> int:
         return 5
+
+    ''' send a tc message into the network '''
 
     def send_tc(self):
         with open('from%d' % self.node_id, 'a') as sent_messages:
@@ -59,6 +71,8 @@ class OLSR_node:
             )
         self.tc_seq += 1
 
+    ''' send a hello message into the network '''
+
     def send_hello(self):
         with open('from%d' % self.node_id, 'a') as sent_messages:
             sent_messages.write(
@@ -69,6 +83,8 @@ class OLSR_node:
                     ' '.join(self.mpr_set)
                 )
             )
+
+    ''' send a data message into the network '''
 
     def send_data(dest_id: int, message: str):
         with open('from%d' % self.node_id, 'a') as sent_messages:
@@ -82,9 +98,13 @@ class OLSR_node:
                 )
             )
 
+    ''' place data that is designated for this node into the recieved file '''
+
     def recieve_data(self, data):
         with open('recieved%d' % self.node_id, 'a') as recieved_messages:
             pass
+
+    ''' run the simluation for 120 seconds '''
 
     def run(self, message: (int, str, int) = (-1, "", -1)):
         destination_id, message, delay = message
@@ -92,12 +112,11 @@ class OLSR_node:
         while i <= 120:
             with open('to%d' % self.node_id) as recieved_messages:
                 recieved_messages.readlines()
-                new_messages = []
+                new_msgs = []
 
-                hello_messages, tc_messages, data_messages = self.sort_messages(
-                    new_messages)
+                hello_msgs, tc_msgs, data_msgs = self.sort_messages(new_msgs)
 
-                for data in data_messages:
+                for data in data_msgs:
                     if int(data[4]) == self.node_id:
                         pass
                     else:
@@ -118,7 +137,7 @@ class OLSR_node:
 
 if __name__ == "__main__":
     source_id, destination_id = map(int, argv[1:3])
-    olsr_node = OLSR_node(source_id)
+    olsr_node = OLSRNode(source_id)
     if source_id == destination_id:
         olsr_node.run()
     else:
