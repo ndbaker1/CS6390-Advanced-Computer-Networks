@@ -16,13 +16,23 @@ recalculate the routing table if necessary
 
 class OLSRNode:
     def __init__(self, node_id: int):
+        # last read line of the message accepting file
+        self.reading_index = 0
+        # numeric id of the node
         self.node_id = node_id
+        # set of links that are unidirectional
         self.unidirection_links = []
+        # set of links that are bidirectional
         self.bidirection_links = []
+        # set of MPRs chosen by this node
         self.mpr_set = []
+        # set of MS's, for which the indicated node has chosen this node as an MPR
         self.ms_set = []
+        # sequence number of topology control messages go out
         self.tc_seq = 0
+        # Topology Control Table created from recieved TC messages
         self.tc_table = []
+        # Router Table computed from TC Table
         self.routing_table = {}
 
         # trigger the creation of files
@@ -107,7 +117,9 @@ class OLSRNode:
     ''' run the simluation for 120 seconds '''
 
     def run(self, message: (int, str, int) = (-1, "", -1)):
+        # deconstruct data that the node will send
         destination_id, message, delay = message
+        # run for 120 seconds
         i = 1
         while i <= 120:
             with open('to%d' % self.node_id) as recieved_messages:
