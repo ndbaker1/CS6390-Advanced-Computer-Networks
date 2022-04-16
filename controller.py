@@ -14,8 +14,14 @@ class Controller:
         self.topology = {}
         # a changset keyed by a int timer, which enables the delayed changes in topology
         self.topology_changes = {}
+        # load topology
+        self.load_topology()
+        # perform a timeout to allow the nodes to complete setup
+        sleep(1)
 
-        # parse the topology file
+    ''' parse the topology file '''
+
+    def load_topology(self):
         with open('topology.txt') as top:
             # filter out empty lines to avoid parsing exceptions
             for line in filter(lambda e: len(e) > 0, top.readlines()):
@@ -33,12 +39,7 @@ class Controller:
                 # update the map storing changes by timestamp
                 self.topology_changes[delay] = change_set
 
-        # perform a timeout to allow the nodes to complete setup
-        sleep(1)
-
-    '''
-    process updates using the topology changeset
-    '''
+    ''' process updates using the topology changeset '''
 
     def update_topology(self, clock):
         # place each update into the current topology map
@@ -55,14 +56,14 @@ class Controller:
             # update the key with the new neighbor set
             self.topology[source] = neighbor_set
 
-    '''
-    run the simulation for 120 seconds
-    '''
+    ''' run the simulation for 120 seconds '''
 
     def run(self):
         i = 0
         while i < 120:
+            # check if there is a topology update for the controller
             self.update_topology(i)
+            # processes any messages for which a message from a node should be passed to its neighbors
             for node, neighbors in self.topology.items():
                 with open('from%d' % node) as mf:
                     lines = mf.readlines()

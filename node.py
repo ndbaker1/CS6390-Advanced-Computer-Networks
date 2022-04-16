@@ -2,6 +2,7 @@ from time import sleep
 from sys import argv
 from pathlib import Path
 
+
 '''
 read toX.txt
 process any new received messages (i.e. DATA, HELLO, TC)
@@ -47,9 +48,9 @@ class OLSRNode:
 
     def sort_messages(self, messages):
         return (
-            [x for x in messages if x[3] == 'HELLO'],
-            [x for x in messages if x[3] == 'TC'],
-            [x for x in messages if x[3] == 'DATA'],
+            [x for x in messages if x.split(' ')[3] == 'HELLO'],
+            [x for x in messages if x.split(' ')[3] == 'TC'],
+            [x for x in messages if x.split(' ')[3] == 'DATA'],
         )
 
     ''' forward messages by updating their sender node '''
@@ -114,6 +115,30 @@ class OLSRNode:
         with open('recieved%d' % self.node_id, 'a') as recieved_messages:
             pass
 
+    ''' process incoming messages'''
+
+    def process_incoming(self):
+        with open('to%d' % self.node_id) as incoming_messages:
+            # fetch the last part of the messages file
+            new_msgs = incoming_messages.readlines()[last_index:]
+            # update the current reading index
+            self.reading_index = len(lines)
+            # sort the messages according to type
+            hello_msgs, tc_msgs, data_msgs = self.sort_messages(new_msgs)
+
+            for data in data_msgs:
+                if int(data.split(' ')[4]) == self.node_id:
+                    with('recieved%d' % self.node_id) as recieved_messages:
+                        recieved_messages.write(data)
+                else:
+                    self.forward_message(data)
+
+            for tc in tc_msgs:
+                self.forward_message(tc)
+
+            for hello in hello_msgs:
+                pass
+
     ''' run the simluation for 120 seconds '''
 
     def run(self, message: (int, str, int) = (-1, "", -1)):
@@ -122,27 +147,22 @@ class OLSRNode:
         # run for 120 seconds
         i = 1
         while i <= 120:
-            with open('to%d' % self.node_id) as recieved_messages:
-                recieved_messages.readlines()
-                new_msgs = []
-
-                hello_msgs, tc_msgs, data_msgs = self.sort_messages(new_msgs)
-
-                for data in data_msgs:
-                    if int(data[4]) == self.node_id:
-                        pass
-                    else:
-                        self.forward_message(data)
+            # process incoming message contents
+            self.process_incoming()
+            # check that it is time to send message or delay the signal
             if i == delay:
                 if destination_id in self.routing_table:
                     self.send_data(destination_id, message)
                 else:
                     delay += 30
+            # send hello message
             if i % 5 == 0:
                 self.send_hello()
+            # send the topology control message
             if i % 10 == 0 and len(self.ms_set) > 0:
                 self.send_tc()
 
+            # step the clock
             i += 1
             sleep(1)
 
