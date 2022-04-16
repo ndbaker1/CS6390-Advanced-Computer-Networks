@@ -14,6 +14,22 @@ remove old entries from the TC table if necessary
 recalculate the routing table if necessary
 '''
 
+''' parse topology control messages and return the data as a tuple in the form (sender, source, sequence, ms_list) '''
+
+
+def parse_tc(tc_message: str):
+    _, sender_id, _, source_id, seq_num, _, *ms_list = tc_message.split(' ')
+
+    sender_id = int(sender_id)
+    source_id = int(source_id)
+    seq_num = int(seq_num)
+    ms_list = [int(node) for node in ms_list]
+
+    return sender_id, source_id, seq_num, ms_list
+
+
+''' parse hello messages and return the data as a tuple in the form (sender, unidirs, bidirs, mprs) '''
+
 
 def parse_hello(hello_message: str):
     _STAR, sender_id, _HELLO, *hello_content = hello_message.split(' ')
@@ -24,24 +40,19 @@ def parse_hello(hello_message: str):
     BIDIR_INDEX = hello_content.index('BIDIR')
     MPR_INDEX = hello_content.index('MPR')
 
-    unidir_list = hello_content[UNIDIR_INDEX + 1:BIDIR_INDEX]
-    bidir_list = hello_content[BIDIR_INDEX + 1:MPR_INDEX]
-    mpr_list = hello_content[MPR_INDEX + 1:]
+    unidir_list = [int(n) for n in hello_content[UNIDIR_INDEX + 1:BIDIR_INDEX]]
+    bidir_list = [int(n) for n in hello_content[BIDIR_INDEX + 1:MPR_INDEX]]
+    mpr_list = [int(n) for n in hello_content[MPR_INDEX + 1:]]
 
-    return (
-        sender_id,
-        [int(x) for x in unidir_list],
-        [int(x) for x in bidir_list],
-        [int(x) for x in mpr_list],
-    )
+    return sender_id, unidir_list, bidir_list, mpr_list
 
 
 class OLSRNode:
     def __init__(self, node_id: int):
-        # last read line of the message accepting file
-        self.reading_index = 0
         # numeric id of the node
         self.node_id = node_id
+        # last read line of the message accepting file
+        self.reading_index = 0
         # set of links that are unidirectional
         self.unidirection_links = set()
         # set of links that are bidirectional
@@ -53,9 +64,9 @@ class OLSRNode:
         # sequence number of topology control messages go out
         self.tc_seq = 0
         # Topology Control Table created from recieved TC messages
-        self.tc_table = []
+        self.tc_table = dict()
         # Router Table computed from TC Table
-        self.routing_table = {}
+        self.routing_table = dict()
 
         # trigger the creation of files
         Path('to%d' % self.node_id).touch()
@@ -68,11 +79,12 @@ class OLSRNode:
     ''' sort read messages based on type (HELLO, TC, DATA) '''
 
     def sort_messages(self, messages):
-        return (
-            [x for x in messages if x.split(' ')[3] == 'HELLO'],
-            [x for x in messages if x.split(' ')[3] == 'TC'],
-            [x for x in messages if x.split(' ')[3] == 'DATA'],
-        )
+
+        tc_messages = [x for x in messages if x.split(' ')[3] == 'TC'],
+        data_message = [x for x in messages if x.split(' ')[3] == 'DATA'],
+        hello_messages = [x for x in messages if x.split(' ')[3] == 'HELLO'],
+
+        return hello_messages, tc_messages, data_message
 
     ''' forward messages by updating their sender node '''
 
@@ -126,6 +138,74 @@ class OLSRNode:
                 )
             )
 
+    ''' compute the routing table using the topology control table entries '''
+
+    def compute_routing_table(self):
+        pass
+
+    ''' handle tc message '''
+
+    def handle_tc_messages(self, tc_messages: list(str)):
+        tc_table_change_detected = False
+        # break apart the tc message string
+        for sender_id, source_id, seq_num, ms_list in map(parse_tc, tc_messages):
+            # add an entry into the topology control table if the source has never been seen before,
+            # or if the sequence number on the tc message is higher than the last seen
+            if source_id not in self.tc_table or self.tc_table[source_id]['seq'] < seq_num:
+                self.tc_table[source_id] = {
+                    'seq': seq_num,
+                    'ms_set': set(ms_list),
+                    'timer': 30,
+                }
+                tc_table_change_detected = True
+
+            self.forward_message(tc)
+
+        # step the timer for the tc_table entries and then remove them if it has been longer than 30 seconds
+        for node_id, table_entry in self.tc_table.items():
+            table_entry['timer'] -= 10
+            if table_entry['timer'] > 0:
+                self.tc_table.pop(node_id)
+                tc_table_change_detected = True
+
+        if tc_table_change_detected:
+            self.compute_routing_table()
+
+    ''' handle hello message '''
+
+    def handle_hello_messages(self, hello_messages: list(str)):
+        # break apart the hello message string
+        for sender_id, unidir, bidir, mpr in map(parse_hello, hello_messages):
+            # step the timer for the tc_table entries and then remove them if it has been longer than 30 seconds
+            for node_id, table_entry in self.tc_table.items():
+                table_entry['timer'] -= 10
+                if table_entry['timer'] > 0:
+                    self.tc_table.pop(node_id)
+
+            # handle reception of hello message
+            for sender_id, unidir, bidir, mpr in map(parse_hello, hello_msgs):
+                self.unidirection_links.add([sender_id, 15])
+
+                for node in unidir:
+                    if node == self.node_id:
+                        self.bidirection_links.add([sender_id, 15])
+
+                for node in bidir:
+                    if node == self.node_id:
+                        self.bidirection_links.add([sender_id, 15])
+
+                for node in mpr:
+                    if node == self.node_id:
+                        self.ms_set.add([sender_id, 15])
+
+            # remove neighbors that have not responsed within the time window
+            for neighbor_data in self.unidirection_links.union(self.bidirection_links).union(self.ms_set):
+                neighbor_data[1] -= 5
+                if neighbor_data[1] < 0:
+                    self.unidirection_links.discard(neighbor_data)
+                    self.bidirection_links.discard(neighbor_data)
+                    self.ms_set.discard(neighbor_data)
+
     ''' process incoming messages'''
 
     def process_incoming(self):
@@ -147,34 +227,8 @@ class OLSRNode:
                     self.forward_message(data)
 
             # handle reception of tc message
-            for tc in tc_msgs:
-                self.forward_message(tc)
-
             # handle reception of hello message
-            for hello in hello_msgs:
-                sender_id, unidir, bidir, mpr = parse_hello(hello)
-
-                self.unidirection_links.add([sender_id, 15])
-
-                for node in unidir:
-                    if node == self.node_id:
-                        self.bidirection_links.add([sender_id, 15])
-
-                for node in bidir:
-                    if node == self.node_id:
-                        self.bidirection_links.add([sender_id, 15])
-
-                for node in mpr:
-                    if node == self.node_id:
-                        self.ms_set.add([sender_id, 15])
-
-            # remove neighbors that have not responsed within the time window
-            for neighbor_data in self.unidirection_links.union(self.bidirection_links).union(self.ms_set):
-                neighbor_data[1] -= 5
-                if neighbor_data[1] <= 0:
-                    self.unidirection_links.discard(neighbor_data)
-                    self.bidirection_links.discard(neighbor_data)
-                    self.ms_set.discard(neighbor_data)
+            self.handle_hello(hello_msgs)
 
     ''' run the simluation for 120 seconds '''
 
