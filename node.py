@@ -3,17 +3,6 @@ from sys import argv
 from pathlib import Path
 
 
-'''
-read toX.txt
-process any new received messages (i.e. DATA, HELLO, TC)
-if it is time to send the data string
-if there is a routing table entry for the destination
-send the data message
-remove old entries of the neighbor table if necessary
-remove old entries from the TC table if necessary
-recalculate the routing table if necessary
-'''
-
 ''' parse topology control messages and return the data as a tuple in the form (sender, source, sequence, ms_list) '''
 
 
@@ -45,6 +34,9 @@ def parse_hello(hello_message: str):
     mpr_list = [int(n) for n in hello_content[MPR_INDEX + 1:]]
 
     return sender_id, unidir_list, bidir_list, mpr_list
+
+
+''' OLSR Node which sends periodic update messages (hello/tc) and can send instances of string data '''
 
 
 class OLSRNode:
@@ -80,9 +72,9 @@ class OLSRNode:
 
     def sort_messages(self, messages):
 
-        tc_messages = [x for x in messages if x.split(' ')[3] == 'TC'],
-        data_message = [x for x in messages if x.split(' ')[3] == 'DATA'],
-        hello_messages = [x for x in messages if x.split(' ')[3] == 'HELLO'],
+        tc_messages = [x for x in messages if x.split(' ')[3] == 'TC']
+        data_message = [x for x in messages if x.split(' ')[3] == 'DATA']
+        hello_messages = [x for x in messages if x.split(' ')[3] == 'HELLO']
 
         return hello_messages, tc_messages, data_message
 
@@ -141,11 +133,12 @@ class OLSRNode:
     ''' compute the routing table using the topology control table entries '''
 
     def compute_routing_table(self):
+
         pass
 
     ''' handle tc message '''
 
-    def handle_tc_messages(self, tc_messages: list(str)):
+    def handle_tc_messages(self, tc_messages: list):
         tc_table_change_detected = False
         # break apart the tc message string
         for sender_id, source_id, seq_num, ms_list in map(parse_tc, tc_messages):
@@ -173,7 +166,7 @@ class OLSRNode:
 
     ''' handle hello message '''
 
-    def handle_hello_messages(self, hello_messages: list(str)):
+    def handle_hello_messages(self, hello_messages: list):
         # break apart the hello message string
         for sender_id, unidir, bidir, mpr in map(parse_hello, hello_messages):
             # step the timer for the tc_table entries and then remove them if it has been longer than 30 seconds
@@ -227,8 +220,9 @@ class OLSRNode:
                     self.forward_message(data)
 
             # handle reception of tc message
+            self.handle_tc_messages(tc_msgs)
             # handle reception of hello message
-            self.handle_hello(hello_msgs)
+            self.handle_hello_messages(hello_msgs)
 
     ''' run the simluation for 120 seconds '''
 
@@ -244,7 +238,9 @@ class OLSRNode:
             if i == delay:
                 if destination_id in self.routing_table:
                     self.send_data(
-                        self.routing_table[destination_id], message_str)
+                        self.routing_table[destination_id],
+                        message_str,
+                    )
                 else:
                     delay += 30
             # send hello message
