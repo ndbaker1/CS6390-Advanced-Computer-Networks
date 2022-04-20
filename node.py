@@ -1,5 +1,6 @@
 from time import sleep
 from sys import argv
+from math import inf
 from pathlib import Path
 from typing import Set, List
 from enum import Enum
@@ -139,10 +140,18 @@ class OLSRNode:
     ''' forward messages by updating their sender node '''
 
     def forward_message(self, message: str):
+        # break up the message
+        split_message = message.split(' ')
+        # check if the destination has a routing entry
+        destination_id = int(split_message[3])
+        if destination_id not in self.routing_table:
+            return
+        # update the next hop on the forwarded message
+        split_message[0] = str(self.routing_table[destination_id])
+        # update the <fromnbr> (forwarded from) header on the forwarded message
+        split_message[1] = str(self.node_id)
+        # write the new message to the file
         with open('from%d' % self.node_id, 'a') as sent_messages:
-            split_message = message.split(' ')
-            # update the <fromnbr> on the forwarded message
-            split_message[1] = str(self.node_id)
             updated_message = ' '.join(split_message) + '\n'
             sent_messages.write(updated_message)
 
@@ -176,6 +185,7 @@ class OLSRNode:
     ''' send a data message into the network '''
 
     def send_data(self, dest_id: int, message: str) -> bool:
+        print('sending', message, self.routing_table)
         # return error if destination is not in the routing table
         if dest_id not in self.routing_table:
             # failed to send message
@@ -196,21 +206,57 @@ class OLSRNode:
         # successfully sent message
         return True
 
-    ''' compute the routing table using the topology control table entries '''
+    ''' compute the routing table using the topology control table entries and neighbor data '''
 
     def compute_routing_table(self):
-        # clear previous routing table entries
-        self.routing_table = dict()
-        # starting node is self, as the single source path is rooted at the current node
-        current_node = self.node_id
-
         # create temporary graph
-        graph = dict()
-        for neighbor_id in self.neighbors.keys():
-            graph[neighbor_id] = neighbor_id
+        graph: dict[int, Set[int]] = dict()
+        nodes: Set[int] = set()
 
-        for node, reachable in self.tc_table.items():
-            pass
+        graph[self.node_id] = set(self.get_bidirectional_neighbors())
+
+        for node_id, node_data in self.tc_table.items():
+            graph[node_id] = node_data.mpr_selectors
+
+        for node_id, node_neighbors in graph.items():
+            nodes.add(node_id)
+            nodes.update(node_neighbors)
+
+        distance = {node: 0 if node == self.node_id else inf for node in nodes}
+        previous = {node: None for node in nodes}
+        visited = {node: False for node in nodes}
+
+        queue = [self.node_id]
+        while queue:
+            print(self.node_id, 'djikstra')
+            current = queue.pop()
+            visited[current] = True
+
+            if current not in graph:
+                continue
+
+            for adjacent in graph[current]:
+                if not visited[adjacent]:
+                    queue.append(adjacent)
+                if distance[current] + 1 < distance[adjacent]:
+                    distance[adjacent] = distance[current] + 1
+                    previous[adjacent] = current
+
+        # clear previous routing table entries
+        self.routing_table.clear()
+        # find the first hop nodes to each node in the network to add to our routing table
+        for node, prev in previous.items():
+            # save our current state
+            current, temp_prev = node, prev
+            # walk the path backwards until we hit the source
+            while temp_prev:
+                print(self.node_id, 'prev', previous, node, temp_prev, prev)
+                current = temp_prev
+                temp_prev = previous[temp_prev]
+            # update the routing table
+            self.routing_table[node] = current
+
+        print('routing table', self.node_id, self.routing_table)
 
     ''' handle tc message '''
 
@@ -278,6 +324,7 @@ class OLSRNode:
         # run while there are still two-hop neighbors to cover
         # it is certain this will converge, because the 2-hop neighbor set is derived from the 1-hop neighbors
         while len(two_hop_neighbor_set) > 0:
+            print(self.node_id, 'neighbor')
             best_pick = {'id': 0, 'score': 0}
             for neighbor_id, neighbor in self.neighbors.items():
                 # compute the number of 2 hops which this neighbor will cover as an MPR
@@ -291,7 +338,8 @@ class OLSRNode:
 
             # remove the covered elements from the newest selected MPR set
             two_hop_neighbor_set.difference_update(
-                self.neighbors[best_pick['id']].neighbor_set)
+                self.neighbors[best_pick['id']].neighbor_set
+            )
             # mark the neighbor as an MPR
             self.neighbors[best_pick['id']].is_mpr = True
 
@@ -344,6 +392,7 @@ class OLSRNode:
             # check that it is time to send message or delay the signal
             if i == delay:
                 if not self.send_data(destination_id, message_str):
+                    print('failed to send')
                     delay += 30
             # send hello message
             if i % 5 == 0:
