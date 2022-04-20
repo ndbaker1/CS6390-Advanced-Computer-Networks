@@ -1,13 +1,49 @@
 from time import sleep
 from sys import argv
 from pathlib import Path
+from typing import Set, List
+from enum import Enum
+from dataclasses import dataclass, field
+
+'''
+messages in this simulation follow the following structures:
+
+MESSAGE( CONTENT ) = NEXT_HOP | FORWARDED_FROM | CONTENT
+DATA_MESSAGE = MESSAGE( "DATA" | SOURCE_NODE |
+                       DESTINATION_NODE | STRING_MESSAGE )
+'''
+
+
+class NodeStatus(Enum):
+    NOT_SYM = 0
+    SYM = 1
+
+
+''' Topology Control Advertisement '''
+
+
+@dataclass
+class TCAdvertisement:
+    sequence: int = 0
+    timer: int = 30
+    mpr_selectors: Set[int] = field(default_factory=set)
+
+
+@dataclass
+class Neighbor:
+    node_id: int
+    status: 'NodeStatus' = NodeStatus.NOT_SYM
+    timer: int = 15
+    is_mpr: bool = False
+    is_mpr_selector: bool = False
+    neighbor_set: Set[int] = field(default_factory=set)
 
 
 ''' parse topology control messages and return the data as a tuple in the form (sender, source, sequence, ms_list) '''
 
 
 def parse_tc(tc_message: str):
-    _, sender_id, _, source_id, seq_num, _, *ms_list = tc_message.split(' ')
+    _, sender_id, _, source_id, seq_num, _, *ms_list = tc_message.split()
 
     sender_id = int(sender_id)
     source_id = int(source_id)
@@ -20,8 +56,8 @@ def parse_tc(tc_message: str):
 ''' parse hello messages and return the data as a tuple in the form (sender, unidirs, bidirs, mprs) '''
 
 
-def parse_hello(hello_message: str):
-    _STAR, sender_id, _HELLO, *hello_content = hello_message.split(' ')
+def parse_hello(hello_message: str) -> (int, List[int], List[int], List[int]):
+    _STAR, sender_id, _HELLO, *hello_content = hello_message.split()
 
     sender_id = int(sender_id)
 
@@ -36,29 +72,34 @@ def parse_hello(hello_message: str):
     return sender_id, unidir_list, bidir_list, mpr_list
 
 
+''' sort read messages based on type (HELLO, TC, DATA) '''
+
+
+def sort_messages(messages: List[str]):
+    tc_messages = [x for x in messages if x.split(' ')[2] == 'TC']
+    data_message = [x for x in messages if x.split(' ')[2] == 'DATA']
+    hello_messages = [x for x in messages if x.split(' ')[2] == 'HELLO']
+
+    return hello_messages, tc_messages, data_message
+
+
 ''' OLSR Node which sends periodic update messages (hello/tc) and can send instances of string data '''
 
 
 class OLSRNode:
     def __init__(self, node_id: int):
         # numeric id of the node
-        self.node_id = node_id
+        self.node_id: int = node_id
         # last read line of the message accepting file
-        self.reading_index = 0
-        # set of links that are unidirectional
-        self.unidirection_links = set()
-        # set of links that are bidirectional
-        self.bidirection_links = set()
-        # set of MPRs chosen by this node
-        self.mpr_set = set()
-        # set of MS's, for which the indicated node has chosen this node as an MPR
-        self.ms_set = set()
+        self.reading_index: int = 0
+        # neighbor set
+        self.neighbors: dict[int, 'Neighbor'] = dict()
         # sequence number of topology control messages go out
-        self.tc_seq = 0
+        self.tc_seq: int = 0
         # Topology Control Table created from recieved TC messages
-        self.tc_table = dict()
+        self.tc_table: dict[int, 'TCAdvertisement'] = dict()
         # Router Table computed from TC Table
-        self.routing_table = dict()
+        self.routing_table: dict[int, int] = dict()
 
         # trigger the creation of files
         Path('to%d' % self.node_id).touch()
@@ -68,23 +109,40 @@ class OLSRNode:
         # give time for other nodes to properly setup
         sleep(1)
 
-    ''' sort read messages based on type (HELLO, TC, DATA) '''
+    def get_unidirectional_neighbors(self) -> List[int]:
+        return [x.node_id for x in self.neighbors.values() if x.status == NodeStatus.NOT_SYM]
 
-    def sort_messages(self, messages):
+    def get_bidirectional_neighbors(self) -> List[int]:
+        return [x.node_id for x in self.neighbors.values() if x.status == NodeStatus.SYM]
 
-        tc_messages = [x for x in messages if x.split(' ')[3] == 'TC']
-        data_message = [x for x in messages if x.split(' ')[3] == 'DATA']
-        hello_messages = [x for x in messages if x.split(' ')[3] == 'HELLO']
+    def get_mprs(self) -> List[int]:
+        return [x.node_id for x in self.neighbors.values() if x.is_mpr]
 
-        return hello_messages, tc_messages, data_message
+    def get_mpr_selectors(self) -> List[int]:
+        return [x.node_id for x in self.neighbors.values() if x.is_mpr_selector]
+
+    ''' gets the set of 2-hop neighbors '''
+
+    def get_two_hop_neighbor_set(self) -> Set[int]:
+        two_hop_neighbor_set = set()
+        # union all of the neighbor's neighbor sets together
+        for neighbor in self.neighbors.values():
+            two_hop_neighbor_set = two_hop_neighbor_set.union(
+                neighbor.neighbor_set)
+
+        # remove all of the one-hop neighbors from the two-hop neighbor set
+        for neighbor_id in self.neighbors.keys():
+            two_hop_neighbor_set.discard(neighbor_id)
+
+        return two_hop_neighbor_set
 
     ''' forward messages by updating their sender node '''
 
     def forward_message(self, message: str):
         with open('from%d' % self.node_id, 'a') as sent_messages:
-          #  update the <fromnbr> on the forwarded message
             split_message = message.split(' ')
-            split_message[1] = self.node_id
+            # update the <fromnbr> on the forwarded message
+            split_message[1] = str(self.node_id)
             updated_message = ' '.join(split_message) + '\n'
             sent_messages.write(updated_message)
 
@@ -93,11 +151,11 @@ class OLSRNode:
     def send_tc(self):
         with open('from%d' % self.node_id, 'a') as sent_messages:
             sent_messages.write(
-                '* %d TC %d %d BIDIR %s MS %s\n' % (
+                '* %d TC %d %d MS %s\n' % (
                     self.node_id,
                     self.node_id,
                     self.tc_seq,
-                    ' '.join(self.ms_set)
+                    ' '.join(map(str, self.get_mpr_selectors())),
                 )
             )
         self.tc_seq += 1
@@ -105,124 +163,185 @@ class OLSRNode:
     ''' send a hello message into the network '''
 
     def send_hello(self):
-        def grab_name(e): return e[0]
         with open('from%d' % self.node_id, 'a') as sent_messages:
             sent_messages.write(
                 '* %d HELLO UNIDIR %s BIDIR %s MPR %s\n' % (
                     self.node_id,
-                    ' '.join(map(grab_name, self.unidirection_links)),
-                    ' '.join(map(grab_name, self.bidirection_links)),
-                    ' '.join(map(grab_name, self.mpr_set)),
+                    ' '.join(map(str, self.get_unidirectional_neighbors())),
+                    ' '.join(map(str, self.get_bidirectional_neighbors())),
+                    ' '.join(map(str, self.get_mprs())),
                 )
             )
 
     ''' send a data message into the network '''
 
-    def send_data(self, dest_id: int, message: str):
+    def send_data(self, dest_id: int, message: str) -> bool:
+        # return error if destination is not in the routing table
+        if dest_id not in self.routing_table:
+            # failed to send message
+            return False
+        # fetch next hop router from the routing table
+        next_hop = self.routing_table[dest_id]
+        # place the data message in the outgoing container
         with open('from%d' % self.node_id, 'a') as sent_messages:
             sent_messages.write(
                 '%d %d DATA %d %d %s\n' % (
-                    self.compute_next_hop(dest_id),
+                    next_hop,
                     self.node_id,
                     self.node_id,
                     dest_id,
                     message,
                 )
             )
+        # successfully sent message
+        return True
 
     ''' compute the routing table using the topology control table entries '''
 
     def compute_routing_table(self):
+        # clear previous routing table entries
+        self.routing_table = dict()
+        # starting node is self, as the single source path is rooted at the current node
+        current_node = self.node_id
 
-        pass
+        # create temporary graph
+        graph = dict()
+        for neighbor_id in self.neighbors.keys():
+            graph[neighbor_id] = neighbor_id
+
+        for node, reachable in self.tc_table.items():
+            pass
 
     ''' handle tc message '''
 
-    def handle_tc_messages(self, tc_messages: list):
-        tc_table_change_detected = False
+    def handle_tc_messages(self, tc_messages: list) -> bool:
+        # track changes
+        topology_changed = False
         # break apart the tc message string
-        for sender_id, source_id, seq_num, ms_list in map(parse_tc, tc_messages):
+        for tc in tc_messages:
+            sender_id, source_id, seq_num, ms_list = parse_tc(tc)
             # add an entry into the topology control table if the source has never been seen before,
             # or if the sequence number on the tc message is higher than the last seen
-            if source_id not in self.tc_table or self.tc_table[source_id]['seq'] < seq_num:
-                self.tc_table[source_id] = {
-                    'seq': seq_num,
-                    'ms_set': set(ms_list),
-                    'timer': 30,
-                }
-                tc_table_change_detected = True
-
-            self.forward_message(tc)
+            if source_id not in self.tc_table or self.tc_table[source_id].sequence < seq_num:
+                topology_changed = True
+                self.tc_table[source_id] = TCAdvertisement(
+                    sequence=seq_num,
+                    mpr_selectors=set(ms_list),
+                )
+                # if the sender of this message has chosen this node as an MPR,
+                # then forward the message
+                if sender_id in self.get_mpr_selectors() and source_id != self.node_id:  # is source != self required?
+                    self.forward_message(tc)
 
         # step the timer for the tc_table entries and then remove them if it has been longer than 30 seconds
-        for node_id, table_entry in self.tc_table.items():
-            table_entry['timer'] -= 10
-            if table_entry['timer'] > 0:
-                self.tc_table.pop(node_id)
-                tc_table_change_detected = True
+        for node_id in list(self.tc_table.keys()):
+            self.tc_table[node_id].timer -= 10
+            if self.tc_table[node_id].timer < 0:
+                del self.tc_table[node_id]
+                topology_changed = True
 
-        if tc_table_change_detected:
-            self.compute_routing_table()
+        return topology_changed
 
     ''' handle hello message '''
 
-    def handle_hello_messages(self, hello_messages: list):
+    def handle_hello_messages(self, hello_messages: list) -> bool:
+        # track changes
+        topology_changed = False
         # break apart the hello message string
         for sender_id, unidir, bidir, mpr in map(parse_hello, hello_messages):
-            # step the timer for the tc_table entries and then remove them if it has been longer than 30 seconds
-            for node_id, table_entry in self.tc_table.items():
-                table_entry['timer'] -= 10
-                if table_entry['timer'] > 0:
-                    self.tc_table.pop(node_id)
+            # insert never before seen entries
+            if sender_id not in self.neighbors:
+                self.neighbors[sender_id] = Neighbor(sender_id)
+                topology_changed = True
 
-            # handle reception of hello message
-            for sender_id, unidir, bidir, mpr in map(parse_hello, hello_msgs):
-                self.unidirection_links.add([sender_id, 15])
+            # reset the lifespan timer for this neighbor
+            self.neighbors[sender_id].timer = 15
 
-                for node in unidir:
-                    if node == self.node_id:
-                        self.bidirection_links.add([sender_id, 15])
+            # detecting a two-way connection
+            if self.node_id in unidir or self.node_id in bidir:
+                if self.neighbors[sender_id].status != NodeStatus.SYM:
+                    topology_changed = True
+                self.neighbors[sender_id].status = NodeStatus.SYM
 
-                for node in bidir:
-                    if node == self.node_id:
-                        self.bidirection_links.add([sender_id, 15])
+            # detect if node has chosen me as an MPR, so add it to the MS set
+            if self.node_id in mpr:
+                if self.neighbors[sender_id].is_mpr_selector != True:
+                    topology_changed = True
+                self.neighbors[sender_id].is_mpr_selector = True
 
-                for node in mpr:
-                    if node == self.node_id:
-                        self.ms_set.add([sender_id, 15])
+            # update 2-hop neighbors
+            connected_neighbors = set(bidir)
+            # exclude self in the neighbor set
+            connected_neighbors.discard(self.node_id)
+            # check whether updating this set will change the topology
+            if connected_neighbors != self.neighbors[sender_id].neighbor_set:
+                topology_changed = True
+            # update the neighbor set
+            self.neighbors[sender_id].neighbor_set = connected_neighbors
 
             # remove neighbors that have not responsed within the time window
-            for neighbor_data in self.unidirection_links.union(self.bidirection_links).union(self.ms_set):
-                neighbor_data[1] -= 5
-                if neighbor_data[1] < 0:
-                    self.unidirection_links.discard(neighbor_data)
-                    self.bidirection_links.discard(neighbor_data)
-                    self.ms_set.discard(neighbor_data)
+            for neighbor_id in list(self.neighbors.keys()):
+                self.neighbors[neighbor_id].timer -= 5
+                if self.neighbors[neighbor_id].timer < 0:
+                    del self.neighbors[neighbor_id]
+                    topology_changed = True
+
+        # update MPRs for this node
+        two_hop_neighbor_set = self.get_two_hop_neighbor_set()
+        # run while there are still two-hop neighbors to cover
+        # it is certain this will converge, because the 2-hop neighbor set is derived from the 1-hop neighbors
+        while len(two_hop_neighbor_set) > 0:
+            best_pick = {'id': 0, 'score': 0}
+            for neighbor_id, neighbor in self.neighbors.items():
+                # compute the number of 2 hops which this neighbor will cover as an MPR
+                nodes_covered = len(two_hop_neighbor_set.intersection(
+                    neighbor.neighbor_set
+                ))
+                # update the current best if the score is higher than the previous best
+                if best_pick['score'] < nodes_covered:
+                    best_pick['id'] = neighbor_id
+                    best_pick['score'] = nodes_covered
+
+            # remove the covered elements from the newest selected MPR set
+            two_hop_neighbor_set.difference_update(
+                self.neighbors[best_pick['id']].neighbor_set)
+            # mark the neighbor as an MPR
+            self.neighbors[best_pick['id']].is_mpr = True
+
+        return topology_changed
+
+    ''' handle data messages '''
+
+    def handle_data_messages(self, data_messages: List[str]):
+        for data in data_messages:
+            message_destination_id = int(data.split(' ')[4])
+            if message_destination_id == self.node_id:
+                with('recieved%d' % self.node_id) as recieved_messages:
+                    recieved_messages.write(data)
+            else:
+                self.forward_message(data)
 
     ''' process incoming messages'''
 
-    def process_incoming(self):
+    def process_incoming(self) -> bool:
         with open('to%d' % self.node_id) as incoming_messages:
-            lines = incoming_messages.readlines()
+            lines = incoming_messages.read().splitlines()
             # fetch the last part of the messages file
-            new_msgs = lines[self.reading_index:]
+            latest_messages = lines[self.reading_index:]
             # update the current reading index
             self.reading_index = len(lines)
             # sort the messages according to type
-            hello_msgs, tc_msgs, data_msgs = self.sort_messages(new_msgs)
-
+            hello_msgs, tc_msgs, data_msgs = sort_messages(latest_messages)
             # handle reception of data message
-            for data in data_msgs:
-                if int(data.split(' ')[4]) == self.node_id:
-                    with('recieved%d' % self.node_id) as recieved_messages:
-                        recieved_messages.write(data)
-                else:
-                    self.forward_message(data)
-
+            self.handle_data_messages(data_msgs)
+            # track state changes from handlers
+            changes_detected = False
             # handle reception of tc message
-            self.handle_tc_messages(tc_msgs)
+            changes_detected |= self.handle_tc_messages(tc_msgs)
             # handle reception of hello message
-            self.handle_hello_messages(hello_msgs)
+            changes_detected |= self.handle_hello_messages(hello_msgs)
+
+            return changes_detected
 
     ''' run the simluation for 120 seconds '''
 
@@ -233,22 +352,23 @@ class OLSRNode:
         i = 1
         while i <= 120:
             # process incoming message contents
-            self.process_incoming()
+            changes_detected = self.process_incoming()
             # check that it is time to send message or delay the signal
             if i == delay:
-                if destination_id in self.routing_table:
-                    self.send_data(
-                        self.routing_table[destination_id],
-                        message_str,
-                    )
-                else:
+                if not self.send_data(destination_id, message_str):
                     delay += 30
             # send hello message
             if i % 5 == 0:
                 self.send_hello()
             # send the topology control message
-            if i % 10 == 0 and len(self.ms_set) > 0:
+            if i % 10 == 0 and len(self.get_mpr_selectors()) > 0:
                 self.send_tc()
+
+            # remove old tc entries or neighbor entries if neccessary
+
+            # recalculate routing table if neccessary
+            if changes_detected:
+                self.compute_routing_table()
 
             # step the clock
             i += 1
