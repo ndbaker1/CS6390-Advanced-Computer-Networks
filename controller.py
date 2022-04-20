@@ -51,7 +51,7 @@ class Controller:
             if state == 'UP':
                 neighbor_set.add(destination)
             elif state == 'DOWN':
-                neighbor_set.remove(destination)
+                neighbor_set.discard(destination)
 
             # update the key with the new neighbor set
             self.topology[source] = neighbor_set
@@ -66,22 +66,23 @@ class Controller:
             # processes any messages for which a message from a node should be passed to its neighbors
             for node, neighbors in self.topology.items():
                 with open('from%d' % node) as mf:
-                    lines = mf.readlines()
-
+                    lines = mf.read().splitlines()
+                    # start a new index 0 or start from the last index for the current node
                     last_index = 0 if node not in self.indexes else self.indexes[node]
-
+                    # update the most recent index of the node to the length of the inbox file
                     self.indexes[node] = len(lines)
-
+                    # process the newest messages
                     for line in lines[last_index:]:
+                        # pull the destination of the message
                         destination_node = line.split(' ')[0]
-
+                        # send messages with the '*' to all available neighbors of the node
                         if destination_node == '*':
                             for neighbor in neighbors:
                                 with open('to%d' % neighbor, 'a') as dest_file:
-                                    dest_file.write(line)
+                                    dest_file.write(line + '\n')
                         else:
                             with open('to%s' % destination_node, 'a') as dest_file:
-                                dest_file.write(line)
+                                dest_file.write(line + '\n')
             sleep(1)
             i += 1
 
