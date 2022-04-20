@@ -223,6 +223,7 @@ class OLSRNode:
             # add an entry into the topology control table if the source has never been seen before,
             # or if the sequence number on the tc message is higher than the last seen
             if source_id not in self.tc_table or self.tc_table[source_id].sequence < seq_num:
+                # trigger topology change
                 topology_changed = True
                 self.tc_table[source_id] = TCAdvertisement(
                     sequence=seq_num,
@@ -232,13 +233,6 @@ class OLSRNode:
                 # then forward the message
                 if sender_id in self.get_mpr_selectors() and source_id != self.node_id:  # is source != self required?
                     self.forward_message(tc)
-
-        # step the timer for the tc_table entries and then remove them if it has been longer than 30 seconds
-        for node_id in list(self.tc_table.keys()):
-            self.tc_table[node_id].timer -= 10
-            if self.tc_table[node_id].timer < 0:
-                del self.tc_table[node_id]
-                topology_changed = True
 
         return topology_changed
 
@@ -279,13 +273,6 @@ class OLSRNode:
             # update the neighbor set
             self.neighbors[sender_id].neighbor_set = connected_neighbors
 
-            # remove neighbors that have not responsed within the time window
-            for neighbor_id in list(self.neighbors.keys()):
-                self.neighbors[neighbor_id].timer -= 5
-                if self.neighbors[neighbor_id].timer < 0:
-                    del self.neighbors[neighbor_id]
-                    topology_changed = True
-
         # update MPRs for this node
         two_hop_neighbor_set = self.get_two_hop_neighbor_set()
         # run while there are still two-hop neighbors to cover
@@ -321,15 +308,28 @@ class OLSRNode:
             else:
                 self.forward_message(data)
 
-    ''' process incoming messages'''
+    ''' read a list of the most recent messages '''
 
-    def process_incoming(self) -> bool:
+    def read_latest_messages(self) -> List[str]:
         with open('to%d' % self.node_id) as incoming_messages:
             lines = incoming_messages.read().splitlines()
             # fetch the last part of the messages file
             latest_messages = lines[self.reading_index:]
             # update the current reading index
             self.reading_index = len(lines)
+            # return messages
+            return latest_messages
+
+    ''' run the simluation for 120 seconds '''
+
+    def run(self, message: (int, str, int) = (-1, "", -1)):
+        # deconstruct data that the node will send
+        destination_id, message_str, delay = message
+        # run for 120 seconds
+        i = 1
+        while i <= 120:
+            # process incoming messages
+            latest_messages = self.read_latest_messages()
             # sort the messages according to type
             hello_msgs, tc_msgs, data_msgs = sort_messages(latest_messages)
             # handle reception of data message
@@ -341,18 +341,6 @@ class OLSRNode:
             # handle reception of hello message
             changes_detected |= self.handle_hello_messages(hello_msgs)
 
-            return changes_detected
-
-    ''' run the simluation for 120 seconds '''
-
-    def run(self, message: (int, str, int) = (-1, "", -1)):
-        # deconstruct data that the node will send
-        destination_id, message_str, delay = message
-        # run for 120 seconds
-        i = 1
-        while i <= 120:
-            # process incoming message contents
-            changes_detected = self.process_incoming()
             # check that it is time to send message or delay the signal
             if i == delay:
                 if not self.send_data(destination_id, message_str):
@@ -364,7 +352,19 @@ class OLSRNode:
             if i % 10 == 0 and len(self.get_mpr_selectors()) > 0:
                 self.send_tc()
 
-            # remove old tc entries or neighbor entries if neccessary
+            # step the timer for the tc_table entries and then remove them if it has been longer than 30 seconds
+            for node_id in list(self.tc_table.keys()):
+                self.tc_table[node_id].timer -= 1
+                if self.tc_table[node_id].timer < 0:
+                    del self.tc_table[node_id]
+                    changes_detected = True
+
+            # remove neighbors that have not responsed within the 10 seconds time window
+            for neighbor_id in list(self.neighbors.keys()):
+                self.neighbors[neighbor_id].timer -= 1
+                if self.neighbors[neighbor_id].timer < 0:
+                    del self.neighbors[neighbor_id]
+                    changes_detected = True
 
             # recalculate routing table if neccessary
             if changes_detected:

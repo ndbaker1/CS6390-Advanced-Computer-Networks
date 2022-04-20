@@ -1,5 +1,6 @@
 import os
 from time import sleep
+from typing import Set
 
 '''
 The Controller emulates the topology of a network of wireless nodes with unidirectional links
@@ -9,11 +10,11 @@ The Controller emulates the topology of a network of wireless nodes with unidire
 class Controller:
     def __init__(self):
         # last read line index from each node output file (fromXXX)
-        self.indexes = {}
+        self.indexes: dict[int, int] = dict()
         # each node stores a set of neighbors
-        self.topology = {}
+        self.topology: dict[int, Set[int]] = dict()
         # a changset keyed by a int timer, which enables the delayed changes in topology
-        self.topology_changes = {}
+        self.topology_changes: dict[int, Set[(int, int, int)]] = dict()
         # load topology
         self.load_topology()
         # perform a timeout to allow the nodes to complete setup
