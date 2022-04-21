@@ -143,11 +143,13 @@ class OLSRNode:
         # break up the message
         split_message = message.split(' ')
         # check if the destination has a routing entry
-        destination_id = int(split_message[3])
+        destination_id = int(split_message[4])
         if destination_id not in self.routing_table:
             return
-        # update the next hop on the forwarded message
-        split_message[0] = str(self.routing_table[destination_id])
+        # see if the message is a flooded message or needs a new next hop
+        if split_message[0] != '*':  # this field is next-hop
+            # update the next hop on the forwarded message
+            split_message[0] = str(self.routing_table[destination_id])
         # update the <fromnbr> (forwarded from) header on the forwarded message
         split_message[1] = str(self.node_id)
         # write the new message to the file
@@ -185,7 +187,7 @@ class OLSRNode:
     ''' send a data message into the network '''
 
     def send_data(self, dest_id: int, message: str) -> bool:
-        print('sending', message, self.routing_table)
+        print('sending', self.node_id, self.routing_table)
         # return error if destination is not in the routing table
         if dest_id not in self.routing_table:
             # failed to send message
@@ -211,33 +213,47 @@ class OLSRNode:
     def compute_routing_table(self):
         # create temporary graph
         graph: dict[int, Set[int]] = dict()
-        nodes: Set[int] = set()
 
+        # copy the one hop bidirectional neighbors into the topology graph
         graph[self.node_id] = set(self.get_bidirectional_neighbors())
 
+        # add nodes to the topology based on their MPR Selectors
         for node_id, node_data in self.tc_table.items():
             graph[node_id] = node_data.mpr_selectors
 
-        for node_id, node_neighbors in graph.items():
-            nodes.add(node_id)
-            nodes.update(node_neighbors)
+        # add any of the missing bidirectional links
+        for node in list(graph.keys()):
+            for neighbor in graph[node]:
+                opposite = graph.get(neighbor, set())
+                opposite.add(node)
+                graph[neighbor] = opposite
 
-        distance = {node: 0 if node == self.node_id else inf for node in nodes}
-        previous = {node: None for node in nodes}
-        visited = {node: False for node in nodes}
+        distance = {
+            node: 0 if node == self.node_id else inf
+            for node in graph.keys()
+        }
+        previous = {
+            node: None
+            for node in graph.keys()
+        }
+        visited = {
+            node: False
+            for node in graph.keys()
+        }
 
+        # perform link state routing with yourself as the source
         queue = [self.node_id]
         while queue:
-            print(self.node_id, 'djikstra')
+            # relax any neighbor of a visited node
+            # this works as an alternative to taking the minimum cost link, because this is based on number of hops
             current = queue.pop()
+            # mark the node as visited
             visited[current] = True
-
-            if current not in graph:
-                continue
-
+            # relax neighbors and add to the queue if unexplored
             for adjacent in graph[current]:
                 if not visited[adjacent]:
                     queue.append(adjacent)
+                # use hops as link costs (constant 1)
                 if distance[current] + 1 < distance[adjacent]:
                     distance[adjacent] = distance[current] + 1
                     previous[adjacent] = current
@@ -247,16 +263,13 @@ class OLSRNode:
         # find the first hop nodes to each node in the network to add to our routing table
         for node, prev in previous.items():
             # save our current state
-            current, temp_prev = node, prev
+            current = node
             # walk the path backwards until we hit the source
-            while temp_prev:
-                print(self.node_id, 'prev', previous, node, temp_prev, prev)
-                current = temp_prev
-                temp_prev = previous[temp_prev]
-            # update the routing table
+            while current != self.node_id and previous[current] != self.node_id:
+                current = previous[current]
+            # update the routing table,
+            # and use the link_id if the previous is the current node
             self.routing_table[node] = current
-
-        print('routing table', self.node_id, self.routing_table)
 
     ''' handle tc message '''
 
@@ -324,7 +337,6 @@ class OLSRNode:
         # run while there are still two-hop neighbors to cover
         # it is certain this will converge, because the 2-hop neighbor set is derived from the 1-hop neighbors
         while len(two_hop_neighbor_set) > 0:
-            print(self.node_id, 'neighbor')
             best_pick = {'id': 0, 'score': 0}
             for neighbor_id, neighbor in self.neighbors.items():
                 # compute the number of 2 hops which this neighbor will cover as an MPR
@@ -349,12 +361,15 @@ class OLSRNode:
 
     def handle_data_messages(self, data_messages: List[str]):
         for data in data_messages:
-            message_destination_id = int(data.split(' ')[4])
-            if message_destination_id == self.node_id:
-                with('recieved%d' % self.node_id) as recieved_messages:
-                    recieved_messages.write(data)
-            else:
-                self.forward_message(data)
+            message_components = data.split(' ')
+            message_next_hop = int(message_components[0])
+            if message_next_hop == self.node_id:
+                message_destination_id = int(message_components[4])
+                if message_destination_id == self.node_id:
+                    with open('recieved%d' % self.node_id, 'a') as recieved_messages:
+                        recieved_messages.write(data + '\n')
+                else:
+                    self.forward_message(data)
 
     ''' read a list of the most recent messages '''
 
@@ -365,8 +380,13 @@ class OLSRNode:
             latest_messages = lines[self.reading_index:]
             # update the current reading index
             self.reading_index = len(lines)
-            # return messages
-            return latest_messages
+
+            def filter_next_hop(message: str):
+                next_hop = message.split()[0]
+                return next_hop == '*' or int(next_hop) == self.node_id
+
+            # return messages which are meant for this node
+            return list(filter(filter_next_hop, latest_messages))
 
     ''' run the simluation for 120 seconds '''
 
@@ -392,7 +412,6 @@ class OLSRNode:
             # check that it is time to send message or delay the signal
             if i == delay:
                 if not self.send_data(destination_id, message_str):
-                    print('failed to send')
                     delay += 30
             # send hello message
             if i % 5 == 0:
@@ -405,7 +424,7 @@ class OLSRNode:
             for node_id in list(self.tc_table.keys()):
                 self.tc_table[node_id].timer -= 1
                 if self.tc_table[node_id].timer < 0:
-                    del self.tc_table[node_id]
+                    del self.tc_table.pop[node_id]
                     changes_detected = True
 
             # remove neighbors that have not responsed within the 10 seconds time window
@@ -418,6 +437,7 @@ class OLSRNode:
             # recalculate routing table if neccessary
             if changes_detected:
                 self.compute_routing_table()
+                print(self.node_id, self.routing_table)
 
             # step the clock
             i += 1

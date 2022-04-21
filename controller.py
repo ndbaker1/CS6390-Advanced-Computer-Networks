@@ -72,18 +72,12 @@ class Controller:
                     last_index = 0 if node not in self.indexes else self.indexes[node]
                     # update the most recent index of the node to the length of the inbox file
                     self.indexes[node] = len(lines)
-                    # process the newest messages
+                    # process the newest messages from the node and broadcast them to the neighboring nodes
                     for line in lines[last_index:]:
-                        # pull the destination of the message
-                        destination_node = line.split(' ')[0]
-                        # send messages with the '*' to all available neighbors of the node
-                        if destination_node == '*':
-                            for neighbor in neighbors:
-                                with open('to%d' % neighbor, 'a') as dest_file:
-                                    dest_file.write(line + '\n')
-                        else:
-                            with open('to%s' % destination_node, 'a') as dest_file:
+                        for neighbor in neighbors:
+                            with open('to%d' % neighbor, 'a') as dest_file:
                                 dest_file.write(line + '\n')
+            # sleep the clock
             sleep(1)
             i += 1
 
