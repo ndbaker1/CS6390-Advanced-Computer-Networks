@@ -131,6 +131,9 @@ class OLSRNode:
         # Router Table computed from TC Table
         self.routing_table: dict[int, int] = dict()
 
+        # track changes that occurr which affect routing
+        self.changes_detected = False
+
         # trigger the creation of files
         Path('to%d' % self.node_id).touch()
         Path('from%d' % self.node_id).touch()
@@ -159,8 +162,7 @@ class OLSRNode:
         two_hop_neighbor_set = set()
         # union all of the neighbor's neighbor sets together
         for neighbor in self.neighbors.values():
-            two_hop_neighbor_set = two_hop_neighbor_set.union(
-                neighbor.neighbor_set)
+            two_hop_neighbor_set.update(neighbor.neighbor_set)
 
         # remove all of the one-hop neighbors from the two-hop neighbor set
         for neighbor_id in self.neighbors.keys():
@@ -310,9 +312,7 @@ class OLSRNode:
 
     ''' handle tc message '''
 
-    def handle_tc_messages(self, tc_messages: list) -> bool:
-        # track changes
-        topology_changed = False
+    def handle_tc_messages(self, tc_messages: list):
         # break apart the tc message string
         for tc in tc_messages:
             sender_id, source_id, seq_num, ms_list = parse_tc(tc)
@@ -323,7 +323,7 @@ class OLSRNode:
             # or if the sequence number on the tc message is higher than the last seen
             if source_id not in self.tc_table or self.tc_table[source_id].sequence < seq_num:
                 # trigger topology change
-                topology_changed = True
+                self.changes_detected = True
                 self.tc_table[source_id] = TCAdvertisement(
                     sequence=seq_num,
                     mpr_selectors=set(ms_list),
@@ -333,19 +333,15 @@ class OLSRNode:
                 if sender_id in self.get_mpr_selectors():
                     self.forward_message(tc)
 
-        return topology_changed
-
     ''' handle hello message '''
 
-    def handle_hello_messages(self, hello_messages: list) -> bool:
-        # track changes
-        topology_changed = False
+    def handle_hello_messages(self, hello_messages: list):
         # break apart the hello message string
         for sender_id, unidir, bidir, mpr in map(parse_hello, hello_messages):
             # insert never before seen entries
             if sender_id not in self.neighbors:
                 self.neighbors[sender_id] = Neighbor(sender_id)
-                topology_changed = True
+                self.changes_detected = True
 
             # reset the lifespan timer for this neighbor
             self.neighbors[sender_id].timer = 15
@@ -353,13 +349,13 @@ class OLSRNode:
             # detecting a two-way connection
             if self.node_id in unidir or self.node_id in bidir:
                 if self.neighbors[sender_id].status != NodeStatus.SYM:
-                    topology_changed = True
+                    self.changes_detected = True
                 self.neighbors[sender_id].status = NodeStatus.SYM
 
             # detect if node has chosen me as an MPR, so add it to the MS set
             if self.node_id in mpr:
                 if self.neighbors[sender_id].is_mpr_selector != True:
-                    topology_changed = True
+                    self.changes_detected = True
                 self.neighbors[sender_id].is_mpr_selector = True
 
             # update 2-hop neighbors
@@ -368,7 +364,7 @@ class OLSRNode:
             connected_neighbors.discard(self.node_id)
             # check whether updating this set will change the topology
             if connected_neighbors != self.neighbors[sender_id].neighbor_set:
-                topology_changed = True
+                self.changes_detected = True
             # update the neighbor set
             self.neighbors[sender_id].neighbor_set = connected_neighbors
 
@@ -394,8 +390,6 @@ class OLSRNode:
             )
             # mark the neighbor as an MPR
             self.neighbors[best_pick['id']].is_mpr = True
-
-        return topology_changed
 
     ''' handle data messages '''
 
@@ -441,18 +435,18 @@ class OLSRNode:
         # run for 120 seconds
         i = 1
         while i <= 120:
+            # track state changes from handlers
+            self.changes_detected = False
             # process incoming messages
             latest_messages = self.read_latest_messages()
             # sort the messages according to type
             hello_msgs, tc_msgs, data_msgs = sort_messages(latest_messages)
             # handle reception of data message
             self.handle_data_messages(data_msgs)
-            # track state changes from handlers
-            changes_detected = False
             # handle reception of tc message
-            changes_detected |= self.handle_tc_messages(tc_msgs)
+            self.handle_tc_messages(tc_msgs)
             # handle reception of hello message
-            changes_detected |= self.handle_hello_messages(hello_msgs)
+            self.handle_hello_messages(hello_msgs)
 
             # check that it is time to send message or delay the signal
             if i == delay:
@@ -470,17 +464,17 @@ class OLSRNode:
                 self.tc_table[node_id].timer -= 1
                 if self.tc_table[node_id].timer < 0:
                     del self.tc_table[node_id]
-                    changes_detected = True
+                    self.changes_detected = True
 
             # remove neighbors that have not responsed within the 10 seconds time window
             for neighbor_id in list(self.neighbors.keys()):
                 self.neighbors[neighbor_id].timer -= 1
                 if self.neighbors[neighbor_id].timer < 0:
                     del self.neighbors[neighbor_id]
-                    changes_detected = True
+                    self.changes_detected = True
 
             # recalculate routing table if neccessary
-            if changes_detected:
+            if self.changes_detected:
                 self.compute_routing_table()
 
             # step the clock
