@@ -7,16 +7,30 @@ from enum import Enum
 from dataclasses import dataclass, field
 
 '''
-messages in this simulation follow the following structures:
 
-MESSAGE( CONTENT ) = NEXT_HOP | FORWARDED_FROM | CONTENT
-DATA_MESSAGE = MESSAGE( "DATA" | SOURCE_NODE |
-                       DESTINATION_NODE | STRING_MESSAGE )
+Messages in this simulation are space-delimited strings,
+and contain section headings accompanied by (sometimes) variable length content.
+
+There are three types of messages which follow the structures below:
+
+    TC      ==> * <fromnbr> TC <srcnode> <seqno> MS <msnode> ... <msnode>
+
+    HELLO   ==> * <node> HELLO UNIDIR <neighbor> ... <neighbor> BIDIR <neighbor> ... <neighbor> MPR <neighbor> ... <neighbor>
+
+    DATA    ==> <nxthop> <fromnbr> DATA <srcnode> <dstnode> <string>
+
+
+!!Notes
+    - the '*' indicates a flooded message, which means every recieving node counts as a next-hop.
+    - DATA messages cannot be flooded.
+    -
 '''
 
 
 class NodeStatus(Enum):
+    # aka. unidirectional link
     NOT_SYM = 0
+    # aka. bidirectional link
     SYM = 1
 
 
@@ -25,22 +39,36 @@ class NodeStatus(Enum):
 
 @dataclass
 class TCAdvertisement:
+    # sequence number of message
+    # used to ignore old messages and recognize new updates to the network
     sequence: int = 0
+    # TTL counter for the node this advertisement belongs to
     timer: int = 30
+    # list of nodes who have chosen this node as an MPR
+    # shows which nodes are reachable from this node as a last-hop
     mpr_selectors: Set[int] = field(default_factory=set)
+
+
+''' Neighboring nodes and accompanying metadata '''
 
 
 @dataclass
 class Neighbor:
+    # id of the neighbor
     node_id: int
+    # unidirectional or bidirectional status of the link
     status: 'NodeStatus' = NodeStatus.NOT_SYM
+    # TTL counter for this neighbor's entry
     timer: int = 15
+    # is this neighbor an MPR for owning node
     is_mpr: bool = False
+    # is this neighbor choosing this owning node as an MPR
     is_mpr_selector: bool = False
+    # set of bidirectional links from this neighbor. (essentially the 2-hop neighborhood from this owning node)
     neighbor_set: Set[int] = field(default_factory=set)
 
 
-''' parse topology control messages and return the data as a tuple in the form (sender, source, sequence, ms_list) '''
+''' Parse topology control messages and return the data as a tuple in the form (sender, source, sequence, ms_list) '''
 
 
 def parse_tc(tc_message: str):
@@ -49,12 +77,13 @@ def parse_tc(tc_message: str):
     sender_id = int(sender_id)
     source_id = int(source_id)
     seq_num = int(seq_num)
+
     ms_list = [int(node) for node in ms_list]
 
     return sender_id, source_id, seq_num, ms_list
 
 
-''' parse hello messages and return the data as a tuple in the form (sender, unidirs, bidirs, mprs) '''
+''' Parse hello messages and return the data as a tuple in the form (sender, unidirs, bidirs, mprs) '''
 
 
 def parse_hello(hello_message: str) -> (int, List[int], List[int], List[int]):
@@ -73,7 +102,7 @@ def parse_hello(hello_message: str) -> (int, List[int], List[int], List[int]):
     return sender_id, unidir_list, bidir_list, mpr_list
 
 
-''' sort read messages based on type (HELLO, TC, DATA) '''
+''' Sort read messages based on type (HELLO, TC, DATA) '''
 
 
 def sort_messages(messages: List[str]):
@@ -110,6 +139,8 @@ class OLSRNode:
         # give time for other nodes to properly setup
         sleep(1)
 
+    ''' LAZY HELPERS FOR NEIGHBOR DATA '''
+
     def get_unidirectional_neighbors(self) -> List[int]:
         return [x.node_id for x in self.neighbors.values() if x.status == NodeStatus.NOT_SYM]
 
@@ -144,6 +175,7 @@ class OLSRNode:
         split_message = message.split(' ')
         # check if the destination has a routing entry
         destination_id = int(split_message[4])
+        # exit the function early if there is no routing table entry
         if destination_id not in self.routing_table:
             return
         # see if the message is a flooded message or needs a new next hop
@@ -187,7 +219,6 @@ class OLSRNode:
     ''' send a data message into the network '''
 
     def send_data(self, dest_id: int, message: str) -> bool:
-        print('sending', self.node_id, self.routing_table)
         # return error if destination is not in the routing table
         if dest_id not in self.routing_table:
             # failed to send message
@@ -219,14 +250,15 @@ class OLSRNode:
 
         # add nodes to the topology based on their MPR Selectors
         for node_id, node_data in self.tc_table.items():
-            graph[node_id] = node_data.mpr_selectors
+            graph[node_id] = node_data.mpr_selectors.copy()
 
         # add any of the missing bidirectional links
         for node in list(graph.keys()):
             for neighbor in graph[node]:
-                opposite = graph.get(neighbor, set())
-                opposite.add(node)
-                graph[neighbor] = opposite
+                # avoid aliasing the neighbor data by creating a copy (shallow is suitable since the data type is int)
+                mirror = graph.get(neighbor, set()).copy()
+                mirror.add(node)
+                graph[neighbor] = mirror
 
         distance = {
             node: 0 if node == self.node_id else inf
@@ -262,11 +294,16 @@ class OLSRNode:
         self.routing_table.clear()
         # find the first hop nodes to each node in the network to add to our routing table
         for node, prev in previous.items():
+            # skip the entry if there was no path found
+            if prev == None:
+                continue
             # save our current state
             current = node
             # walk the path backwards until we hit the source
             while current != self.node_id and previous[current] != self.node_id:
                 current = previous[current]
+                if current == None:  # logging
+                    print(self.node_id, previous, graph, self.neighbors)
             # update the routing table,
             # and use the link_id if the previous is the current node
             self.routing_table[node] = current
@@ -279,6 +316,9 @@ class OLSRNode:
         # break apart the tc message string
         for tc in tc_messages:
             sender_id, source_id, seq_num, ms_list = parse_tc(tc)
+            # do not handle message if it is from self
+            if source_id == self.node_id:
+                continue
             # add an entry into the topology control table if the source has never been seen before,
             # or if the sequence number on the tc message is higher than the last seen
             if source_id not in self.tc_table or self.tc_table[source_id].sequence < seq_num:
@@ -290,7 +330,7 @@ class OLSRNode:
                 )
                 # if the sender of this message has chosen this node as an MPR,
                 # then forward the message
-                if sender_id in self.get_mpr_selectors() and source_id != self.node_id:  # is source != self required?
+                if sender_id in self.get_mpr_selectors():
                     self.forward_message(tc)
 
         return topology_changed
@@ -361,13 +401,18 @@ class OLSRNode:
 
     def handle_data_messages(self, data_messages: List[str]):
         for data in data_messages:
+            # parse the data for next hop info
             message_components = data.split(' ')
             message_next_hop = int(message_components[0])
+            # ensure that this node is supposed to be on the route
             if message_next_hop == self.node_id:
+                # read the final destination of the packet
                 message_destination_id = int(message_components[4])
+                # save it if this node is the designated recipient
                 if message_destination_id == self.node_id:
                     with open('recieved%d' % self.node_id, 'a') as recieved_messages:
                         recieved_messages.write(data + '\n')
+                # or forward the message to the next hop node on the path to the destination
                 else:
                     self.forward_message(data)
 
@@ -424,7 +469,7 @@ class OLSRNode:
             for node_id in list(self.tc_table.keys()):
                 self.tc_table[node_id].timer -= 1
                 if self.tc_table[node_id].timer < 0:
-                    del self.tc_table.pop[node_id]
+                    del self.tc_table[node_id]
                     changes_detected = True
 
             # remove neighbors that have not responsed within the 10 seconds time window
@@ -437,7 +482,6 @@ class OLSRNode:
             # recalculate routing table if neccessary
             if changes_detected:
                 self.compute_routing_table()
-                print(self.node_id, self.routing_table)
 
             # step the clock
             i += 1
