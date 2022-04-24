@@ -26,13 +26,13 @@ echo "0 UP 0 3
 80 DOWN 6 8
 80 DOWN 8 6" > topology.txt
 
-python node.py 0 1 "message from 0" 50 &
-python node.py 1 1 &
-python node.py 2 2 &
-python node.py 3 2 "message from 3" 50 &
-python node.py 4 4 &
-python node.py 6 6 &
-python node.py 7 7 &
-python node.py 8 8 &
-python node.py 9 2 "message from 9" 25 &
-python controller.py &
+./node.py 0 1 "message from 0" 50 &
+./node.py 1 1 &
+./node.py 2 2 &
+./node.py 3 2 "message from 3" 50 &
+./node.py 4 4 &
+./node.py 6 6 &
+./node.py 7 7 &
+./node.py 8 8 &
+./node.py 9 2 "message from 9" 25 &
+./controller.py &

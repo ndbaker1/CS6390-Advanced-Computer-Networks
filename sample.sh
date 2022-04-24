@@ -15,10 +15,10 @@ echo  "0 UP 0 1
 50 DOWN 5 4" > topology.txt
 
 
-python node.py 0 4 "A message from 0 to 4"   40   &
-python node.py 1 1 &
-python node.py 2 2 &
-python node.py 3 3 &
-python node.py 4 0 "Message from 4 to 0"  80 &
-python node.py 5  5  &
-python controller.py &
+./node.py 0 4 "A message from 0 to 4"   40   &
+./node.py 1 1 &
+./node.py 2 2 &
+./node.py 3 3 &
+./node.py 4 0 "Message from 4 to 0"  80 &
+./node.py 5  5  &
+./controller.py &

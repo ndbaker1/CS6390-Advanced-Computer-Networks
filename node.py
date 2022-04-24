@@ -1,10 +1,10 @@
+#!/usr/bin/env python3
 from time import sleep
 from sys import argv
 from math import inf
 from pathlib import Path
 from typing import Set, List
 from enum import Enum
-from dataclasses import dataclass, field
 
 '''
 
@@ -37,35 +37,35 @@ class NodeStatus(Enum):
 ''' Topology Control Advertisement '''
 
 
-@dataclass
 class TCAdvertisement:
-    # sequence number of message
-    # used to ignore old messages and recognize new updates to the network
-    sequence: int = 0
-    # TTL counter for the node this advertisement belongs to
-    timer: int = 30
-    # list of nodes who have chosen this node as an MPR
-    # shows which nodes are reachable from this node as a last-hop
-    mpr_selectors: Set[int] = field(default_factory=set)
+    def __init__(self, sequence: int, mpr_selectors: Set[int]):
+        # sequence number of message
+        # used to ignore old messages and recognize new updates to the network
+        self.sequence: int = sequence
+        # TTL counter for the node this advertisement belongs to
+        self.timer: int = 30
+        # list of nodes who have chosen this node as an MPR
+        # shows which nodes are reachable from this node as a last-hop
+        self.mpr_selectors: Set[int] = mpr_selectors
 
 
 ''' Neighboring nodes and accompanying metadata '''
 
 
-@dataclass
 class Neighbor:
-    # id of the neighbor
-    node_id: int
-    # unidirectional or bidirectional status of the link
-    status: 'NodeStatus' = NodeStatus.NOT_SYM
-    # TTL counter for this neighbor's entry
-    timer: int = 15
-    # is this neighbor an MPR for owning node
-    is_mpr: bool = False
-    # is this neighbor choosing this owning node as an MPR
-    is_mpr_selector: bool = False
-    # set of bidirectional links from this neighbor. (essentially the 2-hop neighborhood from this owning node)
-    neighbor_set: Set[int] = field(default_factory=set)
+    def __init__(self, node_id: str):
+        # id of the neighbor
+        self.node_id: int = node_id
+        # unidirectional or bidirectional status of the link
+        self.status: 'NodeStatus' = NodeStatus.NOT_SYM
+        # TTL counter for this neighbor's entry
+        self.timer: int = 15
+        # is this neighbor an MPR for owning node
+        self.is_mpr: bool = False
+        # is this neighbor choosing this owning node as an MPR
+        self.is_mpr_selector: bool = False
+        # set of bidirectional links from this neighbor. (essentially the 2-hop neighborhood from this owning node)
+        self.neighbor_set: Set[int] = set()
 
 
 ''' Parse topology control messages and return the data as a tuple in the form (sender, source, sequence, ms_list) '''
