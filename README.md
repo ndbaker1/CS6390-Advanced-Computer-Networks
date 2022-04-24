@@ -10,10 +10,10 @@ Use python3 or higher to run `node.py` and `controller.py`.
 
 ```bash
 # example scenario.
-python node.py 0 2 "sending from 0 to 2" 20 &
-python node.py 1 1 &
-python node.py 2 2 &
-python controller.py &
+./node.py 0 2 "sending from 0 to 2" 20 &
+./node.py 1 1 &
+./node.py 2 2 &
+./controller.py &
 ```
 
 ## Node
@@ -22,7 +22,7 @@ These are read by the controller to forward data based on the network topology, 
 
 usage:
 ```bash
-python node.py ID DESTINATION [MESSAGE DELAY]
+./node.py ID DESTINATION [MESSAGE DELAY]
 ```
 | ID | DESTINATION | MESSAGE | DELAY |
 |----|-------------|---------|-------|
@@ -34,5 +34,5 @@ takes no input, reads `topology.txt` for link statuses at indicated timestamps (
 
 usage:
 ```bash
-python controller.py
+./controller.py
 ```
