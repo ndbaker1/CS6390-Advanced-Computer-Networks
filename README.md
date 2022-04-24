@@ -3,10 +3,12 @@ Programming Project for Graduate studies in CS6390 Advanced Computer Networks
 
 ### Academic Info
 **Identification:** Nicholas Baker - ndb180002 <br>
-**Server:** csgrads1
+**Server:** csgrads1 <br>
+**Runtime:** python 3.6 <br>
 
 ## Execution
-Use python3 or higher to run `node.py` and `controller.py`.
+Use __python3__ or higher to run `node.py` and `controller.py`.
+> Only tested for python3.6+
 
 ```bash
 # example scenario.
